@@ -1,3 +1,4 @@
-TOKEN = "8983071273:AAFEUTkdbPrqPxxxxxxxxxxxxxxxxxx"
+TOKEN = “8983071273:AAGAjluw33ORjVAcaPBV0twJjdnt_apn-AI”
+
 ADMINS = [123456789]
 
