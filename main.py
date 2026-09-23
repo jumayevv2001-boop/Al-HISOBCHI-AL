@@ -3,8 +3,12 @@ import json
 import logging
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from openai import OpenAI
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+
+# OpenAI API kalitini olish
+openai_client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 DATA_FILE = "data.json"
 
@@ -20,48 +24,68 @@ def save_data(data):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
-        "Assalomu alaykum! Men AI Hisobchingizman.\n\n"
-        "**Buyruqlar va misollar:**\n"
-        "• *Yuk qo'shish:* `Ali 500 kg bug'doy oldi` yoki `Vali 200 kg yem oldi`\n"
-        "• *Qarz/To'lov:* `Ali 1000000 som berdi`\n"
-        "• *Mijoz hisobi:* `Ali` (mijoz nomini yozing)\n"
-        "• *Barcha mijozlar:* /klientlar\n"
-        "• *Oylik hisobot:* /hisobot"
+        "Assalomu alaykum! Men sizning **AI Hisobchingizman**.\n\n"
+        "🎙 **Ovozli xabar** yuborishingiz yoki matn ko'rinishida yozishingiz mumkin.\n\n"
+        "**Misollar:**\n"
+        "• *'Ali 500 kg korma oldi'* (Yuk kiritish)\n"
+        "• *'Ali 1000000 so'm pul berdi'* (To'lov kiritish)\n"
+        "• *'Ali bir oyda qancha yuk oldi va qancha qarzi bor?'* (AI tahlili va ma'lumot olish)\n\n"
+        "📋 Barcha mijozlar: /klientlar"
     )
     await update.message.reply_text(text, parse_mode="Markdown")
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message.text.strip()
+async def process_text_with_ai(user_text: str):
     data = load_data()
-    clients = data.setdefault("clients", {})
+    system_prompt = f"""
+    Siz ombor va mijozlar hisobini yurituvchi aqlli AI hisobchisiz.
+    Mavjud mijozlar va ombor bazasi (JSON):
+    {json.dumps(data, ensure_ascii=False)}
 
-    words = msg.split()
-    first_word = words[0].capitalize()
+    Foydalanuvchi matni: "{user_text}"
 
-    # Agar shunchaki mijoz ismi yozilsa
-    if len(words) == 1 and first_word in clients:
-        c = clients[first_word]
-        res = f"👤 **Mijoz:** {first_word}\n"
-        res += f"📦 **Jami olingan yuk:** {c.get('total_qty', 0)} kg\n"
-        res += f"💳 **Umumiy qarz/balans:** {c.get('balance', 0):,} so'm\n\n"
-        res += "**So'nggi operatsiyalar:**\n"
-        for h in c.get("history", [])[-5:]:
-            res += f"• {h}\n"
-        await update.message.reply_text(res, parse_mode="Markdown")
-        return
+    Vazifangiz:
+    1. Agar foydalanuvchi yangi yuk yoki to'lov haqida yozgan bo'lsa, ma'lumotni saqlang va tasdiqlang.
+    2. Agar mijozning qarzi, olgan yuklari yoki bir oylik hisoboti haqida so'ralsa, bazadan aniq hisoblab javob bering.
+    3. Javobingiz aniq, xushmuomala va o'zbek tilida bo'lsin.
+    """
 
-    # Yuk yoki to'lov kiritish sodda mantig'i
-    if len(words) >= 3:
-        name = first_word
-        if name not in clients:
-            clients[name] = {"total_qty": 0, "balance": 0, "history": []}
+    response = openai_client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "system", "content": system_prompt}]
+    )
+    return response.choices[0].message.content
 
-        clients[name]["history"].append(msg)
-        save_data(data)
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_text = update.message.text
+    ai_response = await process_text_with_ai(user_text)
+    await update.message.reply_text(ai_response, parse_mode="Markdown")
 
-        await update.message.reply_text(f"✅ **{name}** bo'yicha ma'lumot saqlandi!\n\nTo'liq ko'rish uchun `{name}` deb yozing.")
-    else:
-        await update.message.reply_text("Tushunmadim. Misol: `Ali 500 kg korma oldi` yoki `Ali` deb ismini yozing.")
+async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🎙 Ovozli xabar qabul qilindi, eshitilyapti...")
+    
+    # Ovozli faylni yuklab olish
+    voice_file = await update.message.voice.get_file()
+    file_path = "voice.ogg"
+    await voice_file.download_to_drive(file_path)
+
+    # Whisper AI orqali ovozni matnga o'girish
+    with open(file_path, "rb") as audio_file:
+        transcript = openai_client.audio.transcriptions.create(
+            model="whisper-1", 
+            file=audio_file,
+            language="uz"
+        )
+    
+    recognized_text = transcript.text
+    await update.message.reply_text(f"📝 **Tushunilgan matn:**\n_{recognized_text}_", parse_mode="Markdown")
+
+    # Matnni AI orqali tahlil qilish
+    ai_response = await process_text_with_ai(recognized_text)
+    await update.message.reply_text(ai_response, parse_mode="Markdown")
+
+    # Vaqtinchalik faylni o'chirish
+    if os.path.exists(file_path):
+        os.remove(file_path)
 
 async def clients_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = load_data()
@@ -81,7 +105,10 @@ if __name__ == '__main__':
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("klientlar", clients_list))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_handler(MessageHandler(filters.VOICE, handle_voice))
 
     app.run_polling()
+
+
 
