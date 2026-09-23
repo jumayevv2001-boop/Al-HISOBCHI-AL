@@ -1,1 +1,3 @@
-TOKEN = "8983071273:AAFEUTkdbPrqPrj_wo7RQd8Kn2xmNKdwIdU"
+TOKEN = "8983071273:AAFEUTkdbPrqPxxxxxxxxxxxxxxxxxx"
+ADMINS = [123456789]
+
